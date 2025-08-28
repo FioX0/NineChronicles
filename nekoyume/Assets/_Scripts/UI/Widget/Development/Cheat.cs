@@ -22,6 +22,7 @@ using Skill = Nekoyume.Model.Skill.Skill;
 using Text = UnityEngine.UI.Text;
 using Libplanet.Common;
 using NCTx = Libplanet.Types.Tx.Transaction;
+using UnityEngine.Networking;
 using Nekoyume.Action.Loader;
 using Nekoyume.Game; // for TableSheets
 using Nekoyume.Game.Battle; // for BattleRenderer
@@ -35,6 +36,7 @@ using Nekoyume.Blockchain;
 using Nekoyume.Model;
 using Nekoyume.Model.Item;
 using Nekoyume.Arena;
+using Nekoyume.Multiplanetary;
 
 namespace Nekoyume
 {
@@ -518,20 +520,149 @@ namespace Nekoyume
                 Time.timeScale = 4;
             }
 
-            // Enter to paste Base64 transaction and replay (choose action)
+            // Enter to paste Transaction Hash and replay (choose action)
             if (Input.GetKeyDown(KeyCode.Return))
             {
                 OpenTxReplayInput();
             }
         }
 
-        private const string ReplayPrevStateHex =
-            "16baab0d1e380a0917787f40fc0e66d4d0241bbc1a924386b2fc306b16f6f1bd";
+        // No hardcoded defaults; rely solely on API-provided values
 
-        private const string ReplayNewStateHex =
-            "724d758e28ef5dc83eafa6dba78f9100c85e6e122f1843277c53edf941aa0b13";
+        // Dynamic values populated via API by transaction hash
+        private static string ReplayPrevStateHexDynamic;
+        private static string ReplayNewStateHexDynamic;
+        private static long ReplayBlockIndexDynamic;
+        private static int ReplayRandomSeedDynamic;
 
-        private const long ReplayBlockIndex = 6972101L;
+        [Serializable]
+        private class ReplayDataOdinResponse
+        {
+            public long blockIndex;
+            public string previousState;
+            public string nextState;
+            public int randomSeed;
+            public string txId;
+            public string base64;
+        }
+
+        private static async Cysharp.Threading.Tasks.UniTask<ReplayDataOdinResponse>
+            GetReplayDataAsync(string txHash)
+        {
+            if (string.IsNullOrEmpty(txHash))
+            {
+                return null;
+            }
+
+            var trimmed = txHash.Trim();
+            if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(2);
+            }
+
+            var url = GetReplayEndpointUrl();
+            var payload = "{\"transactionHash\":\"" + trimmed + "\"}";
+
+            var request = new UnityEngine.Networking.UnityWebRequest(url, "POST");
+            var bodyRaw = System.Text.Encoding.UTF8.GetBytes(payload);
+            request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            request.SetRequestHeader("accept", "application/json");
+
+            try
+            {
+                await request.SendWebRequest();
+            }
+            catch (System.Exception e)
+            {
+                NcDebug.LogError($"ReplayDataOdin request exception: {e}");
+                return null;
+            }
+
+            if (request.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+            {
+                NcDebug.LogError(
+                    $"ReplayDataOdin request failed: {request.responseCode} {request.error}");
+                return null;
+            }
+
+            var json = request.downloadHandler.text;
+            try
+            {
+                return UnityEngine.JsonUtility.FromJson<ReplayDataOdinResponse>(json);
+            }
+            catch (System.Exception ex)
+            {
+                NcDebug.LogError(
+                    $"Failed to parse ReplayDataOdin response: {ex}. Body head='{Preview(json, 200)}'");
+                return null;
+            }
+        }
+
+        private static string GetReplayEndpointUrl()
+        {
+            // Determine API path by current planet id
+            var planetId = Game.Game.instance?.CurrentPlanetId;
+            if (planetId.HasValue)
+            {
+                if (planetId.Value.Equals(PlanetId.Heimdall) ||
+                    planetId.Value.Equals(PlanetId.HeimdallInternal))
+                {
+                    return "https://api.9capi.com/ReplayDataHeimdall";
+                }
+
+                if (planetId.Value.Equals(PlanetId.Odin) ||
+                    planetId.Value.Equals(PlanetId.OdinInternal))
+                {
+                    return "https://api.9capi.com/ReplayDataOdin";
+                }
+            }
+
+            // Fallback: infer from RPC host if available
+            var host = Game.Game.instance?.CommandLineOptions?.RpcServerHost ?? string.Empty;
+            if (!string.IsNullOrEmpty(host))
+            {
+                if (host.IndexOf("heimdall", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return "https://api.9capi.com/ReplayDataHeimdall";
+                }
+
+                if (host.IndexOf("odin", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return "https://api.9capi.com/ReplayDataOdin";
+                }
+            }
+
+            // Default to Odin if undetermined
+            return "https://api.9capi.com/ReplayDataOdin";
+        }
+
+        private static async Cysharp.Threading.Tasks.UniTask<bool> ReplayByTxHashAsync(
+            string txHash)
+        {
+            NcDebug.Log($"[TxReplay] Fetching replay data for txHash={txHash}");
+            var data = await GetReplayDataAsync(txHash);
+            if (data == null)
+            {
+                NcDebug.LogError("[TxReplay] No data returned for transaction hash.");
+                return false;
+            }
+
+            ReplayPrevStateHexDynamic = data.previousState;
+            ReplayNewStateHexDynamic = data.nextState;
+            ReplayBlockIndexDynamic = data.blockIndex;
+            ReplayRandomSeedDynamic = data.randomSeed;
+
+            if (string.IsNullOrEmpty(data.base64))
+            {
+                NcDebug.LogError("[TxReplay] API did not return base64 payload.");
+                return false;
+            }
+
+            AutoReplayFromBase64(data.base64);
+            return true;
+        }
 
         private void TryOpenTxReplayInput()
         {
@@ -554,27 +685,22 @@ namespace Nekoyume
                     return;
                 }
 
-                var text = popup.text?.Trim();
-                // If input likely sanitized (no '+' or '/' but clipboard has them), prefer clipboard
-                var cb = GUIUtility.systemCopyBuffer;
-                if (!string.IsNullOrEmpty(cb) && (text?.IndexOfAny(new[] { '+', '/' }) ?? -1) < 0 &&
-                    (cb.IndexOfAny(new[] { '+', '/' }) >= 0))
+                var txHash = popup.text?.Trim();
+                if (string.IsNullOrEmpty(txHash))
                 {
-                    text = cb;
-                }
-
-                if (string.IsNullOrEmpty(text))
-                {
-                    NcDebug.LogWarning("Empty Base64 input.");
+                    NcDebug.LogWarning("Empty Transaction Hash.");
                     return;
                 }
 
-                AutoReplayFromBase64(text);
+                Cysharp.Threading.Tasks.UniTask.Void(async () =>
+                {
+                    await ReplayByTxHashAsync(txHash);
+                });
             };
 
             popup.Show(
-                "Enter Base64 transaction",
-                "Paste Libplanet Transaction (Base64)",
+                "Enter Transaction Hash",
+                "Paste Transaction Hash (hex)",
                 localize: false);
         }
 
@@ -609,7 +735,7 @@ namespace Nekoyume
 
                 if (string.IsNullOrEmpty(text))
                 {
-                    NcDebug.LogWarning("Empty Base64 input.");
+                    NcDebug.LogWarning("Empty Transaction Hash.");
                     return;
                 }
 
@@ -617,8 +743,8 @@ namespace Nekoyume
             };
 
             popup.Show(
-                "Enter Base64 transaction",
-                "Paste Arena Battle Libplanet Transaction (Base64)",
+                "Enter Transaction Hash",
+                "Paste Transaction Hash (hex)",
                 localize: false);
         }
 
@@ -664,7 +790,7 @@ namespace Nekoyume
 
                 if (string.IsNullOrEmpty(text))
                 {
-                    NcDebug.LogWarning("Empty Base64 input.");
+                    NcDebug.LogWarning("Empty Transaction Hash.");
                     return;
                 }
 
@@ -672,8 +798,8 @@ namespace Nekoyume
             };
 
             popup.Show(
-                "Enter Base64 transaction",
-                "Paste Arena Battle Libplanet Transaction (Base64)",
+                "Enter Transaction Hash",
+                "Paste Transaction Hash (hex)",
                 localize: false);
         }
 
@@ -710,27 +836,22 @@ namespace Nekoyume
                     return;
                 }
 
-                var text = popup.text?.Trim();
-                // If input likely sanitized (no '+' or '/' but clipboard has them), prefer clipboard
-                var cb = GUIUtility.systemCopyBuffer;
-                if (!string.IsNullOrEmpty(cb) && (text?.IndexOfAny(new[] { '+', '/' }) ?? -1) < 0 &&
-                    (cb.IndexOfAny(new[] { '+', '/' }) >= 0))
+                var txHash = popup.text?.Trim();
+                if (string.IsNullOrEmpty(txHash))
                 {
-                    text = cb;
-                }
-
-                if (string.IsNullOrEmpty(text))
-                {
-                    NcDebug.LogWarning("Empty Base64 input.");
+                    NcDebug.LogWarning("Empty Transaction Hash.");
                     return;
                 }
 
-                AutoReplayFromBase64(text);
+                Cysharp.Threading.Tasks.UniTask.Void(async () =>
+                {
+                    await ReplayByTxHashAsync(txHash);
+                });
             };
 
             popup.Show(
-                "Enter Base64 transaction",
-                "Paste Libplanet Transaction (Base64)",
+                "Enter Transaction Hash",
+                "Paste Transaction Hash (hex)",
                 localize: false);
         }
 
@@ -878,7 +999,14 @@ namespace Nekoyume
                     // Optional: keep loader path too (only if not already resolved)
                     if (has is null)
                     {
-                        var loaded = (ActionBase)loader.LoadAction(ReplayBlockIndex, actionValue);
+                        if (ReplayBlockIndexDynamic == 0)
+                        {
+                            NcDebug.LogError("[TxReplay] Missing blockIndex from API.");
+                            return;
+                        }
+
+                        var loaded =
+                            (ActionBase)loader.LoadAction(ReplayBlockIndexDynamic, actionValue);
                         if (loaded is HackAndSlash h)
                         {
                             has = h;
@@ -904,22 +1032,42 @@ namespace Nekoyume
             HashDigest<System.Security.Cryptography.SHA256> next = default;
             try
             {
+                if (string.IsNullOrEmpty(ReplayPrevStateHexDynamic) ||
+                    string.IsNullOrEmpty(ReplayNewStateHexDynamic))
+                {
+                    NcDebug.LogError("[TxReplay] Missing previousState/nextState from API.");
+                    return;
+                }
+
                 prev = new HashDigest<System.Security.Cryptography.SHA256>(
-                    ByteUtil.ParseHex(ReplayPrevStateHex));
+                    ByteUtil.ParseHex(ReplayPrevStateHexDynamic));
                 next = new HashDigest<System.Security.Cryptography.SHA256>(
-                    ByteUtil.ParseHex(ReplayNewStateHex));
+                    ByteUtil.ParseHex(ReplayNewStateHexDynamic));
             }
             catch
             {
                 // ignore
             }
 
-            var randomSeed = 1267466043;
+            if (ReplayBlockIndexDynamic == 0)
+            {
+                NcDebug.LogError("[TxReplay] Missing blockIndex from API.");
+                return;
+            }
+
+            if (ReplayRandomSeedDynamic == 0)
+            {
+                NcDebug.LogError("[TxReplay] Missing randomSeed from API.");
+                return;
+            }
+
+            var blockIndex = ReplayBlockIndexDynamic;
+            var randomSeed = ReplayRandomSeedDynamic;
             var eval = new Lib9c.Renderers.ActionEvaluation<HackAndSlash>
             {
                 Action = has,
                 Signer = tx.Signer,
-                BlockIndex = ReplayBlockIndex,
+                BlockIndex = blockIndex,
                 TxId = tx.Id,
                 OutputState = next,
                 PreviousState = prev,
@@ -1189,7 +1337,14 @@ namespace Nekoyume
 
                     if (battle is null)
                     {
-                        var loaded = (ActionBase)loader.LoadAction(ReplayBlockIndex, actionValue);
+                        if (ReplayBlockIndexDynamic == 0)
+                        {
+                            NcDebug.LogError("[ArenaReplay] Missing blockIndex from API.");
+                            return;
+                        }
+
+                        var loaded =
+                            (ActionBase)loader.LoadAction(ReplayBlockIndexDynamic, actionValue);
                         if (loaded is Nekoyume.Action.Arena.Battle b)
                         {
                             // Make sure renderer treats this as the current avatar's action
@@ -1217,21 +1372,41 @@ namespace Nekoyume
             HashDigest<System.Security.Cryptography.SHA256> next = default;
             try
             {
+                if (string.IsNullOrEmpty(ReplayPrevStateHexDynamic) ||
+                    string.IsNullOrEmpty(ReplayNewStateHexDynamic))
+                {
+                    NcDebug.LogError("[ArenaReplay] Missing previousState/nextState from API.");
+                    return;
+                }
+
                 prev = new HashDigest<System.Security.Cryptography.SHA256>(
-                    ByteUtil.ParseHex(ReplayPrevStateHex));
+                    ByteUtil.ParseHex(ReplayPrevStateHexDynamic));
                 next = new HashDigest<System.Security.Cryptography.SHA256>(
-                    ByteUtil.ParseHex(ReplayNewStateHex));
+                    ByteUtil.ParseHex(ReplayNewStateHexDynamic));
             }
             catch
             {
             }
 
-            var randomSeed = 931630225;
+            if (ReplayBlockIndexDynamic == 0)
+            {
+                NcDebug.LogError("[ArenaReplay] Missing blockIndex from API.");
+                return;
+            }
+
+            if (ReplayRandomSeedDynamic == 0)
+            {
+                NcDebug.LogError("[ArenaReplay] Missing randomSeed from API.");
+                return;
+            }
+
+            var blockIndex = ReplayBlockIndexDynamic;
+            var randomSeed = ReplayRandomSeedDynamic;
             var eval = new Lib9c.Renderers.ActionEvaluation<Nekoyume.Action.Arena.Battle>
             {
                 Action = battle,
                 Signer = tx.Signer,
-                BlockIndex = ReplayBlockIndex,
+                BlockIndex = blockIndex,
                 TxId = tx.Id,
                 OutputState = next,
                 PreviousState = prev,
