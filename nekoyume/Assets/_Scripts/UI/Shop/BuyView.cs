@@ -7,6 +7,7 @@ using Nekoyume.EnumType;
 using Nekoyume.Game.Controller;
 using Nekoyume.Helper;
 using Nekoyume.L10n;
+using Nekoyume.Model.Elemental;
 using Nekoyume.Model.Mail;
 using Nekoyume.State;
 using Nekoyume.UI.Scroller;
@@ -31,50 +32,39 @@ namespace Nekoyume.UI.Module
         [Serializable]
         public class ItemTypeFilter
         {
-            public ItemSubTypeFilter typeFilter;  // for identifying
+            public ItemSubTypeFilter typeFilter; // for identifying
             public ToggleDropdown toggleDropdown;
             public ItemSubTypeFilter[] subTypeFilters;
             public List<ShopSortFilter> sortFilters;
         }
 
-        [SerializeField]
-        private CartView cartView;
+        [SerializeField] private CartView cartView;
 
-        [SerializeField]
-        private List<ItemTypeFilter> itemTypeFilters;
+        [SerializeField] private List<ItemTypeFilter> itemTypeFilters;
 
-        [SerializeField]
-        private Button sortButton;
+        [SerializeField] private Button sortButton;
 
-        [SerializeField]
-        private Button sortOrderButton;
+        [SerializeField] private Button sortOrderButton;
 
-        [SerializeField]
-        private Button searchButton;
+        [SerializeField] private Button searchButton;
 
-        [SerializeField]
-        private Button resetButton;
+        [SerializeField] private Button resetButton;
 
-        [SerializeField]
-        private Button historyButton;
+        [SerializeField] private Button historyButton;
 
-        [SerializeField]
-        private Button showCartButton;
+        [SerializeField] private Button showCartButton;
 
-        [SerializeField]
-        private UnityEngine.UI.Toggle levelLimitToggle;
+        [SerializeField] private TMP_Dropdown elementFilter;
 
-        [SerializeField]
-        private RectTransform sortOrderIcon;
+        [SerializeField] private UnityEngine.UI.Toggle levelLimitToggle;
 
-        [SerializeField]
-        private TMP_InputField inputField;
+        [SerializeField] private RectTransform sortOrderIcon;
 
-        [SerializeField]
-        private Transform inputPlaceholder;
+        [SerializeField] private TMP_InputField inputField;
 
-        [SerializeField]
-        private GameObject loading;
+        [SerializeField] private Transform inputPlaceholder;
+
+        [SerializeField] private GameObject loading;
 
         private int _loadingCount;
 
@@ -108,6 +98,9 @@ namespace Nekoyume.UI.Module
         private readonly ReactiveProperty<bool> _useSearch = new();
         private readonly ReactiveProperty<bool> _isAscending = new();
         private readonly ReactiveProperty<bool> _levelLimit = new();
+
+        private readonly ReactiveProperty<ElementalType?> _selectedElementFilter =
+            new((ElementalType?)null);
 
         private readonly ReactiveProperty<BuyMode> _mode = new(BuyMode.Single);
 
@@ -145,7 +138,8 @@ namespace Nekoyume.UI.Module
             _itemIds.AddRange(tableSheets.ConsumableItemSheet.Values.Select(x => x.Id));
             _itemIds.AddRange(tableSheets.CostumeItemSheet.Values.Select(x => x.Id));
             _itemIds.AddRange(tableSheets.MaterialItemSheet.Values.Select(x => x.Id));
-            _customIconIds.AddRange(tableSheets.CustomEquipmentCraftIconSheet.Values.Select(x => x.IconId));
+            _customIconIds.AddRange(
+                tableSheets.CustomEquipmentCraftIconSheet.Values.Select(x => x.IconId));
             _runeIds.AddRange(tableSheets.RuneListSheet.Values.Select(x => x.Id));
             _petIds.AddRange(tableSheets.PetSheet.Values.Select(x => x.Id));
 
@@ -155,7 +149,10 @@ namespace Nekoyume.UI.Module
                     "UI_ALERT_NOT_IMPLEMENTED_CONTENT");
             });
 
-            showCartButton.onClick.AddListener(() => { _mode.SetValueAndForceNotify(BuyMode.Multiple); });
+            showCartButton.onClick.AddListener(() =>
+            {
+                _mode.SetValueAndForceNotify(BuyMode.Multiple);
+            });
 
             cartView.Set(() =>
                 {
@@ -265,6 +262,23 @@ namespace Nekoyume.UI.Module
                 _levelLimit.Value = value;
                 ResetPage();
             });
+
+            // Element filter dropdown: [All] + list of ElementalType
+            if (elementFilter != null)
+            {
+                var elementOptions = new List<string> { "All" };
+                elementOptions.AddRange(ElementalTypeExtension.GetAllTypes()
+                    .Select(e => e.ToString()));
+                elementFilter.ClearOptions();
+                elementFilter.AddOptions(elementOptions);
+                elementFilter.onValueChanged.AddListener(index =>
+                {
+                    _selectedElementFilter.Value = index == 0
+                        ? (ElementalType?)null
+                        : ElementalTypeExtension.GetAllTypes()[index - 1];
+                    ResetPage();
+                });
+            }
         }
 
         public void OnBuyProductAction()
@@ -338,17 +352,20 @@ namespace Nekoyume.UI.Module
 
             bool InLevelLimit(int id)
             {
-                return requirementSheet.TryGetValue(id, out var requirementRow) && avatarLevel >= requirementRow.Level;
+                return requirementSheet.TryGetValue(id, out var requirementRow) &&
+                       avatarLevel >= requirementRow.Level;
             }
 
             bool IsMatchWithItemId(int id)
             {
-                return Regex.IsMatch(L10nManager.LocalizeItemName(id), inputField.text, RegexOptions.IgnoreCase);
+                return Regex.IsMatch(L10nManager.LocalizeItemName(id), inputField.text,
+                    RegexOptions.IgnoreCase);
             }
 
             bool IsMatchWithCustomId(int id)
             {
-                return Regex.IsMatch(L10nManager.LocalizeCustomItemName(id), inputField.text, RegexOptions.IgnoreCase);
+                return Regex.IsMatch(L10nManager.LocalizeCustomItemName(id), inputField.text,
+                    RegexOptions.IgnoreCase);
             }
         }
 
@@ -363,17 +380,22 @@ namespace Nekoyume.UI.Module
             switch (filter)
             {
                 case ItemSubTypeFilter.RuneStone:
-                    var filteredRuneList = _runeIds.Where(id => Regex.IsMatch(L10nManager.LocalizeRuneName(id), itemName, RegexOptions.IgnoreCase)).ToList();
+                    var filteredRuneList = _runeIds.Where(id =>
+                        Regex.IsMatch(L10nManager.LocalizeRuneName(id), itemName,
+                            RegexOptions.IgnoreCase)).ToList();
                     var runeSheet = Game.Game.instance.TableSheets.RuneSheet;
                     return filteredRuneList.Any()
                         ? filteredRuneList.Select(id => runeSheet[id].Ticker).ToArray()
                         : new[] { "RUNE" };
 
                 case ItemSubTypeFilter.PetSoulStone:
-                    var filteredPetList = _petIds.Where(id => Regex.IsMatch(L10nManager.LocalizePetName(id), itemName, RegexOptions.IgnoreCase)).ToList();
+                    var filteredPetList = _petIds.Where(id =>
+                        Regex.IsMatch(L10nManager.LocalizePetName(id), itemName,
+                            RegexOptions.IgnoreCase)).ToList();
                     var petSheet = Game.Game.instance.TableSheets.PetSheet;
                     return filteredPetList.Any()
-                        ? filteredPetList.Select(id => petSheet[id].SoulStoneTicker.ToUpper()).ToArray()
+                        ? filteredPetList.Select(id => petSheet[id].SoulStoneTicker.ToUpper())
+                            .ToArray()
                         : new[] { "SOULSTONE" };
                 default:
                     return new[] { "RUNE" };
@@ -403,7 +425,13 @@ namespace Nekoyume.UI.Module
             {
                 var (filteredIds, isCustom) = GetFilteredIds(filter);
                 await ReactiveShopState.RequestBuyProductsAsync(
-                    filter, orderType, limit * 15, reset, filteredIds, isCustom);
+                    filter,
+                    orderType,
+                    limit * 15,
+                    reset,
+                    filteredIds,
+                    isCustom,
+                    _selectedElementFilter.Value);
             }
 
             _loadingCount--;
@@ -414,7 +442,10 @@ namespace Nekoyume.UI.Module
 
         protected override void SubscribeToSearchConditions()
         {
-            _selectedSortFilter.Subscribe(filter => { _sortText.text = L10nManager.Localize($"UI_{filter.ToString().ToUpper()}"); }).AddTo(gameObject);
+            _selectedSortFilter.Subscribe(filter =>
+            {
+                _sortText.text = L10nManager.Localize($"UI_{filter.ToString().ToUpper()}");
+            }).AddTo(gameObject);
             _useSearch.Subscribe(useSearch =>
             {
                 resetButton.interactable = useSearch;
@@ -424,7 +455,10 @@ namespace Nekoyume.UI.Module
                     inputField.text = string.Empty;
                 }
             }).AddTo(gameObject);
-            _isAscending.Subscribe(isAscending => { sortOrderIcon.localScale = new Vector3(1, isAscending ? 1 : -1, 1); }).AddTo(gameObject);
+            _isAscending.Subscribe(isAscending =>
+            {
+                sortOrderIcon.localScale = new Vector3(1, isAscending ? 1 : -1, 1);
+            }).AddTo(gameObject);
 
             _mode.Subscribe(x =>
             {
@@ -439,6 +473,12 @@ namespace Nekoyume.UI.Module
                         break;
                 }
             }).AddTo(gameObject);
+
+            _selectedElementFilter.Subscribe(_ =>
+            {
+                _page.SetValueAndForceNotify(0);
+                UpdateView();
+            }).AddTo(gameObject);
         }
 
         protected override void OnClickItem(ShopItem item)
@@ -452,7 +492,7 @@ namespace Nekoyume.UI.Module
                         if (item.ItemBase is not null)
                         {
                             if (_selectedItems.Exists(x =>
-                                x.Product.ProductId.Equals(item.Product.ProductId)))
+                                    x.Product.ProductId.Equals(item.Product.ProductId)))
                             {
                                 break;
                             }
@@ -460,7 +500,8 @@ namespace Nekoyume.UI.Module
                         else
                         {
                             if (_selectedItems.Exists(x =>
-                                x.FungibleAssetProduct.ProductId.Equals(item.FungibleAssetProduct.ProductId)))
+                                    x.FungibleAssetProduct.ProductId.Equals(
+                                        item.FungibleAssetProduct.ProductId)))
                             {
                                 break;
                             }
@@ -484,7 +525,8 @@ namespace Nekoyume.UI.Module
                     else
                     {
                         selectedItem = _selectedItems.FirstOrDefault(x =>
-                            item.FungibleAssetProduct.ProductId.Equals(x.FungibleAssetProduct.ProductId));
+                            item.FungibleAssetProduct.ProductId.Equals(x.FungibleAssetProduct
+                                .ProductId));
                     }
 
                     if (selectedItem == null)
@@ -547,7 +589,13 @@ namespace Nekoyume.UI.Module
             _isAscending.SetValueAndForceNotify(SortFilterAscending[_selectedSortFilter.Value]);
             _useSearch.SetValueAndForceNotify(false);
             _levelLimit.SetValueAndForceNotify(false);
+            _selectedElementFilter.SetValueAndForceNotify(null);
             _mode.SetValueAndForceNotify(BuyMode.Single);
+
+            if (elementFilter != null)
+            {
+                elementFilter.SetValueWithoutNotify(0);
+            }
 
             ClearSelectedItems();
         }
@@ -555,9 +603,19 @@ namespace Nekoyume.UI.Module
         protected override IEnumerable<ShopItem> GetSortedModels(List<ShopItem> items)
         {
             // to check mimir equipment level
-            return _levelLimit.Value
+            var filtered = _levelLimit.Value
                 ? items.Where(item => Util.IsUsableItem(item.ItemBase))
                 : items;
+
+            if (_selectedElementFilter.Value != null)
+            {
+                var target = _selectedElementFilter.Value.Value;
+                filtered = filtered.Where(item =>
+                    item.Product is null ||
+                    (item.ItemBase != null && item.ItemBase.ElementalType == target));
+            }
+
+            return filtered;
         }
 
         protected override void UpdateView()

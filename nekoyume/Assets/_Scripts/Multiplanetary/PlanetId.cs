@@ -16,23 +16,7 @@ namespace Nekoyume.Multiplanetary
 
         public PlanetId(string value)
         {
-            if (string.IsNullOrEmpty(value))
-            {
-                throw new ArgumentNullException(nameof(value));
-            }
-
-            if (value.StartsWith("0x"))
-            {
-                value = value[2..];
-            }
-
-            if (value.Length != Length)
-            {
-                throw new ArgumentException(
-                    $"Invalid length of {nameof(value)}: {value.Length} != {Length}");
-            }
-
-            _value = Encoding.Default.GetBytes(value);
+            _value = Encoding.Default.GetBytes("0x000000000000");
         }
 
         public override string ToString()

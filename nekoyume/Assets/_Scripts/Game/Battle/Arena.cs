@@ -27,14 +27,11 @@ namespace Nekoyume.Game.Battle
 {
     public class Arena : MonoBehaviour, IArena
     {
-        [SerializeField]
-        private GameObject container;
+        [SerializeField] private GameObject container;
 
-        [SerializeField]
-        private Character.ArenaCharacter me;
+        [SerializeField] private Character.ArenaCharacter me;
 
-        [SerializeField]
-        private Character.ArenaCharacter enemy;
+        [SerializeField] private Character.ArenaCharacter enemy;
 
         public IObservable<Arena> OnArenaEnd => _onArenaEnd;
         private readonly ISubject<Arena> _onArenaEnd = new Subject<Arena>();
@@ -42,6 +39,9 @@ namespace Nekoyume.Game.Battle
         private Coroutine _battleCoroutine;
         private int _turnNumber;
         private bool _isPlaying;
+
+        // Replay support: when true, skip backend polling and finish immediately
+        public bool SkipServerPolling { get; set; }
 
         // Only Changed on Thread Pool
         public bool IsAvatarStateUpdatedAfterBattle { get; set; }
@@ -116,7 +116,8 @@ namespace Nekoyume.Game.Battle
             Address enemyAvatarAddress,
             (int, int)? winDefeatCount = null)
         {
-            yield return StartCoroutine(CoStart(myDigest, enemyDigest, myAvatarAddress, enemyAvatarAddress));
+            yield return StartCoroutine(CoStart(myDigest, enemyDigest, myAvatarAddress,
+                enemyAvatarAddress));
 
             foreach (var e in log)
             {
@@ -124,7 +125,12 @@ namespace Nekoyume.Game.Battle
             }
 
             BattleResponse battleResponse = null;
-            yield return PollBattleResponse(myAvatarAddress).ToCoroutine(response => battleResponse = response);
+            if (!SkipServerPolling)
+            {
+                yield return PollBattleResponse(myAvatarAddress)
+                    .ToCoroutine(response => battleResponse = response);
+            }
+
             yield return StartCoroutine(CoEnd(log, rewards, winDefeatCount, battleResponse));
         }
 
@@ -136,7 +142,9 @@ namespace Nekoyume.Game.Battle
             int maxAdditionalAttempts = 10; // 1초가된후 최대 요청개수
 
             // 처음에 바로 시도
-            var battleResponse = await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(RxProps.LastBattleId, myAvatarAddress.ToHex());
+            var battleResponse =
+                await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(RxProps.LastBattleId,
+                    myAvatarAddress.ToHex());
 
             if (battleResponse == null || battleResponse.BattleStatus != BattleStatus.SUCCESS)
             {
@@ -149,7 +157,8 @@ namespace Nekoyume.Game.Battle
                         battleResponse.BattleStatus == BattleStatus.NO_REMAINING_TICKET ||
                         battleResponse.BattleStatus == BattleStatus.EXPIRED)
                     {
-                        NcDebug.LogError($"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
+                        NcDebug.LogError(
+                            $"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
                         //폴링 실패시 처리.
                         return null;
                     }
@@ -160,7 +169,9 @@ namespace Nekoyume.Game.Battle
                 // 초기 요청시간을 줄여가며 폴링 시작
                 foreach (var interval in initialPollingIntervals)
                 {
-                    battleResponse = await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(RxProps.LastBattleId, myAvatarAddress.ToHex());
+                    battleResponse =
+                        await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(
+                            RxProps.LastBattleId, myAvatarAddress.ToHex());
 
                     if (battleResponse != null)
                     {
@@ -170,6 +181,7 @@ namespace Nekoyume.Game.Battle
                             isPollingSuccessful = true; // 폴링 성공 시 플래그 설정
                             break; // 성공 시 더 이상 요청하지 않도록 break
                         }
+
                         if (battleResponse.BattleStatus == BattleStatus.NOT_FOUND_BATTLE_ACTION ||
                             battleResponse.BattleStatus == BattleStatus.INVALID_BATTLE ||
                             battleResponse.BattleStatus == BattleStatus.DUPLICATE_TRANSACTION ||
@@ -177,18 +189,24 @@ namespace Nekoyume.Game.Battle
                             battleResponse.BattleStatus == BattleStatus.NO_REMAINING_TICKET ||
                             battleResponse.BattleStatus == BattleStatus.EXPIRED)
                         {
-                            NcDebug.LogError($"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
+                            NcDebug.LogError(
+                                $"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
                             //폴링 실패시 처리.
                             return null;
                         }
                     }
+
                     await UniTask.Delay(interval); // milliseconds to seconds
                 }
 
                 // 1초 간격으로 추가 폴링
-                for (int i = 0; i < maxAdditionalAttempts && !isPollingSuccessful; i++) // 성공하지 않은 경우에만 추가 요청
+                for (int i = 0;
+                     i < maxAdditionalAttempts && !isPollingSuccessful;
+                     i++) // 성공하지 않은 경우에만 추가 요청
                 {
-                    battleResponse = await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(RxProps.LastBattleId, myAvatarAddress.ToHex());
+                    battleResponse =
+                        await ApiClients.Instance.Arenaservicemanager.GetBattleAsync(
+                            RxProps.LastBattleId, myAvatarAddress.ToHex());
 
                     if (battleResponse != null)
                     {
@@ -198,6 +216,7 @@ namespace Nekoyume.Game.Battle
                             isPollingSuccessful = true; // 폴링 성공 시 플래그 설정
                             break; // 성공 시 더 이상 요청하지 않도록 break
                         }
+
                         if (battleResponse.BattleStatus == BattleStatus.NOT_FOUND_BATTLE_ACTION ||
                             battleResponse.BattleStatus == BattleStatus.INVALID_BATTLE ||
                             battleResponse.BattleStatus == BattleStatus.DUPLICATE_TRANSACTION ||
@@ -205,11 +224,13 @@ namespace Nekoyume.Game.Battle
                             battleResponse.BattleStatus == BattleStatus.NO_REMAINING_TICKET ||
                             battleResponse.BattleStatus == BattleStatus.EXPIRED)
                         {
-                            NcDebug.LogError($"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
+                            NcDebug.LogError(
+                                $"[Arena] 폴링 실패: {battleResponse.BattleStatus} 상태입니다."); // 로그메세지 작성
                             //폴링 실패시 처리.
                             return null;
                         }
                     }
+
                     await UniTask.Delay(1000); // 1 second interval
                 }
 
@@ -219,6 +240,7 @@ namespace Nekoyume.Game.Battle
                     return null;
                 }
             }
+
             return battleResponse;
         }
 
@@ -234,7 +256,8 @@ namespace Nekoyume.Game.Battle
 
             _turnNumber = 1;
 
-            Widget.Find<ArenaBattle>().Show(myDigest, enemyDigest, myAvatarAddress, enemyAvatarAddress, TableSheets.Instance);
+            Widget.Find<ArenaBattle>().Show(myDigest, enemyDigest, myAvatarAddress,
+                enemyAvatarAddress, TableSheets.Instance);
             enemy.Pet.Animator.DestroyTarget();
             yield return new WaitForSeconds(2.0f);
 
@@ -250,7 +273,8 @@ namespace Nekoyume.Game.Battle
             (int, int)? winDefeatCount = null,
             BattleResponse battleResponse = null)
         {
-            IsAvatarStateUpdatedAfterBattle = false;
+            // In replay mode, allow immediate progression without backend updates
+            IsAvatarStateUpdatedAfterBattle = SkipServerPolling ? true : false;
             ActionRenderHandler.Instance.Pending = false;
             _onArenaEnd.OnNext(this);
 
@@ -264,7 +288,8 @@ namespace Nekoyume.Game.Battle
             arenaCharacter.ShowSpeech("PLAYER_WIN");
             arenaCharacter.Pet.Animator.Play(PetAnimation.Type.BattleEnd);
             Widget.Find<ArenaBattle>().Close();
-            Widget.Find<RankingBattleResultPopup>().Show(log, rewards, OnEnd, winDefeatCount, battleResponse);
+            Widget.Find<RankingBattleResultPopup>()
+                .Show(log, rewards, OnEnd, winDefeatCount, battleResponse);
             yield return null;
         }
 
@@ -302,7 +327,8 @@ namespace Nekoyume.Game.Battle
             IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoNormalAttack);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoNormalAttack);
             target.AddAction(actionParams);
             yield return null;
         }
@@ -313,7 +339,8 @@ namespace Nekoyume.Game.Battle
             IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoBlowAttack);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoBlowAttack);
             target.AddAction(actionParams);
             yield return null;
         }
@@ -324,16 +351,20 @@ namespace Nekoyume.Game.Battle
             IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoBlowAttack);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoBlowAttack);
             target.AddAction(actionParams);
             yield return null;
         }
 
 
-        public IEnumerator CoDoubleAttackWithCombo(ArenaCharacter caster, IEnumerable<ArenaSkill.ArenaSkillInfo> skillInfos, IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
+        public IEnumerator CoDoubleAttackWithCombo(ArenaCharacter caster,
+            IEnumerable<ArenaSkill.ArenaSkillInfo> skillInfos,
+            IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoDoubleAttackWithCombo);
+            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos,
+                target.CoDoubleAttackWithCombo);
             target.AddAction(actionParams);
             yield return null;
         }
@@ -344,7 +375,8 @@ namespace Nekoyume.Game.Battle
             IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoDoubleAttack);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoDoubleAttack);
             target.AddAction(actionParams);
             yield return null;
         }
@@ -355,7 +387,8 @@ namespace Nekoyume.Game.Battle
             IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoAreaAttack);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoAreaAttack);
             target.AddAction(actionParams);
             yield return null;
         }
@@ -499,10 +532,13 @@ namespace Nekoyume.Game.Battle
             }
         }
 
-        public IEnumerator CoShatterStrike(ArenaCharacter caster, IEnumerable<ArenaSkill.ArenaSkillInfo> skillInfos, IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
+        public IEnumerator CoShatterStrike(ArenaCharacter caster,
+            IEnumerable<ArenaSkill.ArenaSkillInfo> skillInfos,
+            IEnumerable<ArenaSkill.ArenaSkillInfo> buffInfos)
         {
             var target = caster.Id == me.Id ? me : enemy;
-            var actionParams = new ArenaActionParams(target, skillInfos, buffInfos, target.CoShatterStrike);
+            var actionParams =
+                new ArenaActionParams(target, skillInfos, buffInfos, target.CoShatterStrike);
             target.AddAction(actionParams);
             yield return null;
         }

@@ -10,6 +10,7 @@ using Nekoyume.Model.Item;
 using Nekoyume.Model.Skill;
 using Nekoyume.TableData;
 using UniRx;
+using Nekoyume.Model.Elemental;
 
 namespace Nekoyume.State
 {
@@ -30,8 +31,11 @@ namespace Nekoyume.State
         private static readonly List<ItemProductResponseModel> CachedBuyItemProducts = new();
         private static readonly List<ItemProductResponseModel> CachedSellItemProducts = new();
 
-        private static readonly List<FungibleAssetValueProductResponseModel> CachedBuyFungibleAssetProducts = new();
-        private static readonly List<FungibleAssetValueProductResponseModel> CachedSellFungibleAssetProducts = new();
+        private static readonly List<FungibleAssetValueProductResponseModel>
+            CachedBuyFungibleAssetProducts = new();
+
+        private static readonly List<FungibleAssetValueProductResponseModel>
+            CachedSellFungibleAssetProducts = new();
 
         private static bool BuyProductMaxChecker;
         private static bool BuyFavMaxChecker;
@@ -60,7 +64,8 @@ namespace Nekoyume.State
             int limit,
             bool reset = false,
             int[] ids = null,
-            bool isCustom = false)
+            bool isCustom = false,
+            ElementalType? element = null)
         {
             if (!reset && BuyProductMaxChecker)
             {
@@ -71,7 +76,15 @@ namespace Nekoyume.State
             var statType = filter.ToItemStatType();
             var offset = reset ? 0 : CachedBuyItemProducts.Count;
             var (products, totalCount) =
-                await ApiClients.Instance.MarketServiceClient.GetBuyProducts(itemSubType, offset, limit, orderType, statType, ids, isCustom);
+                await ApiClients.Instance.MarketServiceClient.GetBuyProducts(
+                    itemSubType,
+                    offset,
+                    limit,
+                    orderType,
+                    statType,
+                    ids,
+                    isCustom,
+                    element);
 
             if (reset)
             {
@@ -104,7 +117,8 @@ namespace Nekoyume.State
 
             var offset = reset ? 0 : CachedBuyFungibleAssetProducts.Count;
             var (fungibleAssets, totalCount) =
-                await ApiClients.Instance.MarketServiceClient.GetBuyFungibleAssetProducts(tickers, offset, limit, orderType);
+                await ApiClients.Instance.MarketServiceClient.GetBuyFungibleAssetProducts(tickers,
+                    offset, limit, orderType);
 
             if (reset)
             {
@@ -146,8 +160,8 @@ namespace Nekoyume.State
 
             var products = new List<ItemProductResponseModel>();
             foreach (var model in CachedBuyItemProducts.Where(model =>
-                model.SellerAgentAddress != agentAddress &&
-                !PurchasedProductIds.Contains(model.ProductId)))
+                         model.SellerAgentAddress != agentAddress &&
+                         !PurchasedProductIds.Contains(model.ProductId)))
             {
                 if (model.Legacy)
                 {
@@ -198,7 +212,8 @@ namespace Nekoyume.State
                 .FirstOrDefault(model => model is not null && model.ProductId == productId);
         }
 
-        public static FungibleAssetValueProductResponseModel GetSellFungibleAssetProduct(Guid productId)
+        public static FungibleAssetValueProductResponseModel GetSellFungibleAssetProduct(
+            Guid productId)
         {
             return SellFungibleAssetProducts.Value.FirstOrDefault(x => x.ProductId == productId);
         }
@@ -326,7 +341,8 @@ namespace Nekoyume.State
                     var curBlockIndex = Game.Game.instance.Agent.BlockIndex;
                     var legacyItemCount = CachedBuyItemProducts
                         .Where(x => x.Legacy)
-                        .Count(x => x.RegisteredBlockIndex + Order.ExpirationInterval - curBlockIndex > 0);
+                        .Count(x =>
+                            x.RegisteredBlockIndex + Order.ExpirationInterval - curBlockIndex > 0);
                     var newItemCount = CachedBuyItemProducts.Count(x => !x.Legacy);
                     var sum = legacyItemCount + newItemCount;
                     return sum;

@@ -65,8 +65,41 @@ namespace Nekoyume
             var prefab = Load<GameObject>($"{key}");
             if (prefab == null)
             {
-                NcDebug.LogError($"Failed to load prefab : {key}");
-                return null;
+                // On-demand attempt: Addressables by key
+                try
+                {
+                    var handle = Addressables.LoadAssetAsync<GameObject>(key);
+                    prefab = handle.WaitForCompletion();
+                    if (prefab != null)
+                    {
+                        _resources[key] = prefab;
+                    }
+                }
+                catch
+                {
+                    /* ignore */
+                }
+
+                // Fallback to Resources folder common paths
+                if (prefab == null)
+                {
+                    prefab = Resources.Load<GameObject>(key);
+                    if (prefab == null)
+                    {
+                        prefab = Resources.Load<GameObject>($"Character/{key}");
+                    }
+
+                    if (prefab != null)
+                    {
+                        _resources[key] = prefab;
+                    }
+                }
+
+                if (prefab == null)
+                {
+                    NcDebug.LogError($"Failed to load prefab : {key}");
+                    return null;
+                }
             }
 
             var isDontDestroy = _dontDestroyOnLoadResources.ContainsKey(key);
@@ -93,7 +126,7 @@ namespace Nekoyume
             Object.Destroy(go);
         }
 
-#region Addressable
+        #region Addressable
 
         public async UniTask LoadAsync<T>(string key, bool isDonDestroy = false) where T : Object
         {
@@ -125,7 +158,8 @@ namespace Nekoyume
         /// https://discussions.unity.com/t/addressables-extremely-slow-load-time/827561
         /// https://discussions.unity.com/t/very-slow-asset-loading-when-using-labels/828051
         /// </summary>
-        public async UniTask LoadAllAsync<T>(string label, bool isDonDestroy = false, System.Action<string>? loadCallback = null) where T : Object
+        public async UniTask LoadAllAsync<T>(string label, bool isDonDestroy = false,
+            System.Action<string>? loadCallback = null) where T : Object
         {
             var opHandle = Addressables.LoadResourceLocationsAsync(label, typeof(T));
             await opHandle;
@@ -160,6 +194,6 @@ namespace Nekoyume
             _resources.Clear();
         }
 
-#endregion Addressable
+        #endregion Addressable
     }
 }

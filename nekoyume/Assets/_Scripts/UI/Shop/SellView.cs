@@ -6,6 +6,7 @@ using Nekoyume.Game;
 using Nekoyume.Helper;
 using Nekoyume.L10n;
 using Nekoyume.Model.Item;
+using Nekoyume.Model.Elemental;
 using Nekoyume.State;
 using TMPro;
 using UnityEngine;
@@ -17,11 +18,11 @@ namespace Nekoyume.UI.Module
 
     public class SellView : ShopView
     {
-        [SerializeField]
-        private TMP_Dropdown itemSubTypeFilter;
+        [SerializeField] private TMP_Dropdown itemSubTypeFilter;
 
-        [SerializeField]
-        private TMP_Dropdown sortFilter;
+        [SerializeField] private TMP_Dropdown sortFilter;
+
+        [SerializeField] private TMP_Dropdown elementFilter;
 
         private ShopItem _selectedItem;
 
@@ -31,6 +32,9 @@ namespace Nekoyume.UI.Module
 
         private readonly ReactiveProperty<ShopSortFilter> _selectedSortFilter =
             new(ShopSortFilter.CP);
+
+        private readonly ReactiveProperty<ElementalType?> _selectedElementFilter =
+            new((ElementalType?)null);
 
         public void ClearSelectedItem()
         {
@@ -75,6 +79,24 @@ namespace Nekoyume.UI.Module
                     }
                 })
                 .Subscribe(filter => _selectedSortFilter.Value = filter).AddTo(gameObject);
+
+            // Element filter dropdown: [All] + list of ElementalType
+            if (elementFilter != null)
+            {
+                var elementOptions = new List<string> { "All" };
+                elementOptions.AddRange(ElementalTypeExtension.GetAllTypes()
+                    .Select(e => e.ToString()));
+                elementFilter.ClearOptions();
+                elementFilter.AddOptions(elementOptions);
+                elementFilter.onValueChanged.AsObservable()
+                    .Subscribe(index =>
+                    {
+                        _selectedElementFilter.Value = index == 0
+                            ? (ElementalType?)null
+                            : ElementalTypeExtension.GetAllTypes()[index - 1];
+                    })
+                    .AddTo(gameObject);
+            }
         }
 
         protected override void SubscribeToSearchConditions()
@@ -85,6 +107,12 @@ namespace Nekoyume.UI.Module
                 UpdateView();
             }).AddTo(gameObject);
             _selectedSortFilter.Subscribe(_ =>
+            {
+                _page.SetValueAndForceNotify(0);
+                UpdateView();
+            }).AddTo(gameObject);
+
+            _selectedElementFilter.Subscribe(_ =>
             {
                 _page.SetValueAndForceNotify(0);
                 UpdateView();
@@ -120,9 +148,15 @@ namespace Nekoyume.UI.Module
         {
             itemSubTypeFilter.SetValueWithoutNotify(0);
             sortFilter.SetValueWithoutNotify(0);
+            if (elementFilter != null)
+            {
+                elementFilter.SetValueWithoutNotify(0);
+            }
+
             _page.SetValueAndForceNotify(0);
             _selectedSubTypeFilter.Value = ItemSubTypeFilter.All;
             _selectedSortFilter.Value = ShopSortFilter.CP;
+            _selectedElementFilter.Value = null;
             _selectedItem = null;
         }
 
@@ -140,9 +174,12 @@ namespace Nekoyume.UI.Module
                 && (x.FungibleAssetValue.GetItemSubTypeFilter() == _selectedSubTypeFilter.Value ||
                     _selectedSubTypeFilter.Value == ItemSubTypeFilter.All));
             var itemProducts = models.Where(x =>
-                x.Product is not null
-                && (x.ItemBase.ItemSubType == _selectedSubTypeFilter.Value.ToItemSubType() ||
-                    _selectedSubTypeFilter.Value == ItemSubTypeFilter.All)).ToList();
+                    x.Product is not null
+                    && (x.ItemBase.ItemSubType == _selectedSubTypeFilter.Value.ToItemSubType() ||
+                        _selectedSubTypeFilter.Value == ItemSubTypeFilter.All)
+                    && (_selectedElementFilter.Value == null ||
+                        x.ItemBase.ElementalType == _selectedElementFilter.Value))
+                .ToList();
 
             var result = new List<ShopItem>();
             switch (_selectedSortFilter.Value)
@@ -171,7 +208,8 @@ namespace Nekoyume.UI.Module
                                     false,
                                     TableSheets.Instance.CrystalEquipmentGrindingSheet,
                                     TableSheets.Instance.CrystalMonsterCollectionMultiplierSheet,
-                                    States.Instance.StakingLevel).DivRem((BigInteger)x.Product.Price)
+                                    States.Instance.StakingLevel)
+                                .DivRem((BigInteger)x.Product.Price)
                                 .Quotient
                                 .MajorUnit
                             : 0).ToList();

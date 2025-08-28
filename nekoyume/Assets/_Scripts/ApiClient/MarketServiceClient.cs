@@ -10,6 +10,7 @@ using MarketService.Response;
 using Nekoyume.EnumType;
 using Nekoyume.Model.Item;
 using Nekoyume.Model.Stat;
+using Nekoyume.Model.Elemental;
 
 namespace Nekoyume.ApiClient
 {
@@ -23,7 +24,8 @@ namespace Nekoyume.ApiClient
             if (string.IsNullOrEmpty(url))
             {
                 _url = string.Empty;
-                NcDebug.Log($"[{nameof(MarketServiceClient)}] initialized with empty host url because of no MarketServiceHost");
+                NcDebug.Log(
+                    $"[{nameof(MarketServiceClient)}] initialized with empty host url because of no MarketServiceHost");
                 return;
             }
 
@@ -40,9 +42,16 @@ namespace Nekoyume.ApiClient
             MarketOrderType order,
             StatType statType,
             int[] ids,
-            bool isCustom = false)
+            bool isCustom = false,
+            ElementalType? element = null)
         {
-            var url = $"{_url}/Market/products/items/{(int)itemSubType}?limit={limit}&offset={offset}&order={order}&stat={statType.ToString()}&isCustom={isCustom}";
+            var url =
+                $"{_url}/Market/products/items/{(int)itemSubType}?limit={limit}&offset={offset}&order={order}&stat={statType.ToString()}&isCustom={isCustom}";
+            if (element.HasValue)
+            {
+                url += $"&element={(int)element.Value}";
+            }
+
             if (ids is not null && ids.Any())
             {
                 var idParamName = itemSubType.IsEquipment() ? "&iconIds=" : "&itemIds=";
@@ -68,11 +77,12 @@ namespace Nekoyume.ApiClient
             return (response.ItemProducts.ToList(), response.TotalCount);
         }
 
-        public async Task<(List<FungibleAssetValueProductResponseModel>, int)> GetBuyFungibleAssetProducts(
-            string[] tickers,
-            int offset,
-            int limit,
-            MarketOrderType order)
+        public async Task<(List<FungibleAssetValueProductResponseModel>, int)>
+            GetBuyFungibleAssetProducts(
+                string[] tickers,
+                int offset,
+                int limit,
+                MarketOrderType order)
         {
             var url = $"{_url}/Market/products/fav?limit={limit}&offset={offset}&order={order}";
 
@@ -100,7 +110,8 @@ namespace Nekoyume.ApiClient
             return (response.FungibleAssetValueProducts.ToList(), response.TotalCount);
         }
 
-        public async Task<(List<FungibleAssetValueProductResponseModel>, List<ItemProductResponseModel>)>
+        public async Task<(List<FungibleAssetValueProductResponseModel>,
+                List<ItemProductResponseModel>)>
             GetProducts(Address address)
         {
             var url = $"{_url}/Market/products/{address}";
@@ -127,7 +138,9 @@ namespace Nekoyume.ApiClient
             return (fungibleAssets, items);
         }
 
-        public async Task<(List<FungibleAssetValueProductResponseModel>, List<ItemProductResponseModel>)> GetProducts(Guid productId)
+        public async
+            Task<(List<FungibleAssetValueProductResponseModel>, List<ItemProductResponseModel>)>
+            GetProducts(Guid productId)
         {
             var url = $"{_url}/Market/products?productIds={productId}";
             string json;
